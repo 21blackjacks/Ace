@@ -31,8 +31,8 @@ export function HomePage() {
   const [selectedFilter, setSelectedFilter] = useState(vibeFilters[0]);
   const onboardingPreferences = useMemo(() => loadOnboardingPreferences(), []);
   const liveResults = useGooglePlaces(selectedFilter.query, 8);
-  const recommendationsHref = `/search?mode=recommendations&q=${encodeURIComponent(selectedFilter.query)}`;
-  const browseRecommendationsHref = `/search?mode=recommendations&q=${encodeURIComponent("best local places near me")}`;
+  const recommendationsHref = "/search?mode=recommendations";
+  const browseRecommendationsHref = "/search?mode=recommendations";
 
   useEffect(() => {
     const requested = sessionStorage.getItem("ace-location-requested");

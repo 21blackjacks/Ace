@@ -1,5 +1,5 @@
 import { ArrowLeft, Heart, Search, SlidersHorizontal } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { PlaceImage } from "../components/places/PlaceImage";
 import { useGooglePlaces } from "../hooks/useGooglePlaces";
@@ -36,12 +36,24 @@ export function SearchPage() {
   const places = useAppStore((state) => state.places);
   const savePlace = useAppStore((state) => state.savePlace);
   const requestedQuery = searchParams.get("q");
-  const recommendationsMode = searchParams.get("mode") === "recommendations" || !requestedQuery;
-  const activeQuery = requestedQuery ?? "best local places near me";
-  const [queryDraft, setQueryDraft] = useState({ source: activeQuery, value: activeQuery });
-  const query = queryDraft.source === activeQuery ? queryDraft.value : activeQuery;
+  const modeParam = searchParams.get("mode");
+  const recommendationsMode = modeParam === "recommendations" || !requestedQuery;
+  const recommendationQuery = useMemo(() => {
+    const vibeContext = user.preferences.vibeTags.slice(0, 3).join(" ");
+    const socialContext = user.preferences.socialStyles[0] ?? "friends";
+    return ["best local places near me", vibeContext, socialContext].filter(Boolean).join(" ");
+  }, [user.preferences.socialStyles, user.preferences.vibeTags]);
+  const activeQuery = recommendationsMode ? recommendationQuery : (requestedQuery ?? recommendationQuery);
+  const [queryDraft, setQueryDraft] = useState({ source: activeQuery, value: recommendationsMode ? "" : activeQuery });
+  const query = queryDraft.source === activeQuery ? queryDraft.value : recommendationsMode ? "" : activeQuery;
   const [selectedFilter, setSelectedFilter] = useState("All");
   const liveResults = useGooglePlaces(activeQuery, 12);
+
+  useEffect(() => {
+    if (modeParam === "recommendations" && requestedQuery) {
+      setSearchParams({ mode: "recommendations" }, { replace: true });
+    }
+  }, [modeParam, requestedQuery, setSearchParams]);
 
   const interpreted = useMemo(() => interpretSearchQuery(activeQuery, user), [activeQuery, user]);
   const curatedPlaces = useMemo(() => places.filter((place) => place.source !== "google_places"), [places]);
@@ -51,8 +63,12 @@ export function SearchPage() {
   }, [curatedPlaces, interpreted, liveResults.isLive, liveResults.isLoading, liveResults.places, selectedFilter, user]);
 
   const runSearch = () => {
-    const nextQuery = query.trim() || "something to do nearby";
-    setSearchParams({ q: nextQuery });
+    const nextQuery = query.trim();
+    if (!nextQuery && recommendationsMode) {
+      setSearchParams({ mode: "recommendations" });
+      return;
+    }
+    setSearchParams({ q: nextQuery || "something to do nearby" });
   };
 
   const submitSearch = (event: FormEvent) => {
@@ -73,6 +89,12 @@ export function SearchPage() {
         >
           <ArrowLeft size={27} />
         </button>
+        {recommendationsMode ? (
+          <div className="min-w-0 flex-1">
+            <p className="text-[22px] font-extrabold leading-tight">Recommendations</p>
+            <p className="mt-1 truncate text-sm font-semibold text-ace-secondary">For {user.name} near {user.currentLocation.label}</p>
+          </div>
+        ) : (
         <form onSubmit={submitSearch} className="min-w-0 flex-1">
           <label className="sr-only" htmlFor="search-query">
             Search
@@ -89,10 +111,12 @@ export function SearchPage() {
                   runSearch();
                 }
               }}
+              placeholder="Search places or plans"
               className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-ace-text outline-none placeholder:text-ace-secondary"
             />
           </div>
         </form>
+        )}
         <button type="button" aria-label="Open filters" className="grid size-10 shrink-0 place-items-center rounded-full text-ace-text">
           <SlidersHorizontal size={26} />
         </button>
