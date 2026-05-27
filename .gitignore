@@ -1,0 +1,7 @@
+node_modules
+dist
+.codex-tools
+.pnpm-debug.log
+.env
+.DS_Store
+*.local
