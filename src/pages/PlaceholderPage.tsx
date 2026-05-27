@@ -1,5 +1,6 @@
 import { UserRound } from "lucide-react";
 import { Link } from "react-router-dom";
+import { BrandLogo } from "../components/layout/BrandLogo";
 
 type PlaceholderPageProps = {
   title: string;
@@ -11,7 +12,7 @@ export function PlaceholderPage({ title, standalone = false }: PlaceholderPagePr
     <section className="flex min-h-screen flex-col gap-6 px-6 py-12">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold text-ace-cyan">ACE</p>
+          <BrandLogo className="h-8 w-auto drop-shadow-[0_0_10px_rgba(32,214,210,0.18)]" />
           <h1 className="mt-2 text-3xl font-bold tracking-normal">{title}</h1>
           <p className="mt-2 text-sm leading-6 text-ace-secondary">
             Foundation route is wired. Real data and interactions will land in the next implementation pass.

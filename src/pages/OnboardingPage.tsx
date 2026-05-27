@@ -1,7 +1,8 @@
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, Compass, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronRight, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { BrandLogo } from "../components/layout/BrandLogo";
 import {
   aceTypeForPreferences,
   appPreferencesFromOnboarding,
@@ -147,13 +148,14 @@ export function OnboardingPage() {
   const setAceProfile = useAppStore((state) => state.setAceProfile);
   const [step, setStep] = useState<OnboardingStep>(() => initialStepForPath(location.pathname));
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [selectedBonusTags, setSelectedBonusTags] = useState<string[]>([]);
   const [budget, setBudget] = useState<ACEBudgetPreference>("$$");
   const [aceResult, setAceResult] = useState<ACETypeResult | null>(null);
 
   const question = onboardingQuestions[questionIndex];
-  const selectedAnswer = question ? answers[question.id] : undefined;
+  const selectedAnswers = question ? (answers[question.id] ?? []) : [];
+  const hasSelectedAnswer = selectedAnswers.length > 0;
   const quizProgress = useMemo(() => ((questionIndex + 1) / onboardingQuestions.length) * 100, [questionIndex]);
 
   useEffect(() => {
@@ -189,7 +191,7 @@ export function OnboardingPage() {
   };
 
   const nextQuestion = () => {
-    if (!selectedAnswer) return;
+    if (!hasSelectedAnswer) return;
     if (questionIndex === onboardingQuestions.length - 1) {
       setStep("bonus");
       return;
@@ -207,15 +209,22 @@ export function OnboardingPage() {
     setSelectedBonusTags((current) => (current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]));
   };
 
+  const toggleQuestionAnswer = (questionId: string, optionId: string, multiSelect?: boolean) => {
+    setAnswers((current) => {
+      const currentAnswers = current[questionId] ?? [];
+      if (!multiSelect) return { ...current, [questionId]: [optionId] };
+
+      const nextAnswers = currentAnswers.includes(optionId) ? currentAnswers.filter((id) => id !== optionId) : [...currentAnswers, optionId];
+      return { ...current, [questionId]: nextAnswers };
+    });
+  };
+
   if (step === "welcome") {
     return (
       <ScreenFrame>
         <div className="flex flex-1 flex-col justify-between">
           <div>
-            <div className="inline-flex items-center gap-3 text-ace-cyan">
-              <Compass size={36} />
-              <span className="bg-gradient-to-r from-[#83C9FF] via-[#6DB9FF] to-[#20D6D2] bg-clip-text text-6xl font-black leading-none tracking-normal text-transparent">ACE</span>
-            </div>
+            <BrandLogo className="h-[72px] w-auto drop-shadow-[0_0_18px_rgba(32,214,210,0.22)]" />
             <h1 className="mt-8 text-[38px] font-black leading-[1.03] tracking-normal">Find things worth doing, made for you.</h1>
             <p className="mt-5 text-base font-semibold leading-7 text-ace-secondary">
               ACE learns what you love so it can find places, plans, and experiences that actually fit your life.
@@ -309,19 +318,20 @@ export function OnboardingPage() {
         <Header canGoBack onBack={goBack} eyebrow={`${questionIndex + 1} of ${onboardingQuestions.length}`} progress={quizProgress} />
         <div className="mt-7">
           <h1 className="text-[30px] font-black leading-tight">{question.question}</h1>
+          {question.multiSelect ? <p className="mt-2 text-sm font-bold text-ace-secondary">Select all that apply.</p> : null}
         </div>
         <div className={`mt-6 flex-1 overflow-y-auto pb-4 ${question.imageCards ? "grid content-start grid-cols-2 gap-3" : "space-y-3"}`}>
           {question.options.map((option) => (
             <AnswerCard
               key={option.id}
               option={option}
-              selected={selectedAnswer === option.id}
-              onSelect={() => setAnswers((current) => ({ ...current, [question.id]: option.id }))}
+              selected={selectedAnswers.includes(option.id)}
+              onSelect={() => toggleQuestionAnswer(question.id, option.id, question.multiSelect)}
               imageMode={question.imageCards}
             />
           ))}
         </div>
-        <PrimaryButton disabled={!selectedAnswer} onClick={nextQuestion}>
+        <PrimaryButton disabled={!hasSelectedAnswer} onClick={nextQuestion}>
           Next
           <ArrowRight size={18} />
         </PrimaryButton>

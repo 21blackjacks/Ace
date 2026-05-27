@@ -32,6 +32,7 @@ export type OnboardingAnswer = {
 export type OnboardingQuestion = {
   id: string;
   question: string;
+  multiSelect?: boolean;
   imageCards?: boolean;
   options: OnboardingAnswer[];
 };
@@ -75,7 +76,7 @@ export const onboardingQuestions: OnboardingQuestion[] = [
   },
   {
     id: "place_vibe",
-    question: "Which place vibe draws you in the most?",
+    question: "Which place draws you in the most?",
     imageCards: true,
     options: [
       { id: "q2_trendy_lively", label: "Trendy & lively", traits: ["social", "trendy", "energetic"], image: venueImage.rooftop, alt: "Lively rooftop patio with friends" },
@@ -100,6 +101,7 @@ export const onboardingQuestions: OnboardingQuestion[] = [
   {
     id: "worth_it_factor",
     question: "A place feels most worth it when...",
+    multiSelect: true,
     options: [
       { id: "q4_unique", label: "It feels unique and a little unexpected", traits: ["novelty", "hidden_gem", "experience_value"] },
       { id: "q4_quality", label: "It is high quality and worth spending more for", traits: ["quality", "premium", "experience_value"] },
@@ -110,7 +112,8 @@ export const onboardingQuestions: OnboardingQuestion[] = [
   },
   {
     id: "plan_ruiner",
-    question: "What's most likely to ruin a plan for you?",
+    question: "What's most likely to ruin your night?",
+    multiSelect: true,
     options: [
       { id: "q5_crowded", label: "Crowded and overwhelming", traits: ["avoid_crowds", "sensory_comfort", "calm_preference"] },
       { id: "q5_overpriced", label: "Overpriced for what it is", traits: ["budget_sensitive", "value_focused"] },
@@ -315,9 +318,12 @@ const frictionFromTraits = (traits: string[]) => {
   return Array.from(new Set(friction));
 };
 
-export function calculateACEType(answers: Record<string, string>, selectedBonusTags: string[], budget: ACEBudgetPreference) {
+export function calculateACEType(answers: Record<string, string[]>, selectedBonusTags: string[], budget: ACEBudgetPreference) {
   const traitCounts: Record<string, number> = {};
-  const selectedAnswers = Object.values(answers).map(answerById).filter((answer): answer is OnboardingAnswer => Boolean(answer));
+  const selectedAnswers = Object.values(answers)
+    .flat()
+    .map(answerById)
+    .filter((answer): answer is OnboardingAnswer => Boolean(answer));
   const selectedTraits = selectedAnswers.flatMap((answer) => answer.traits);
   const comfortZone = selectedAnswers.find((answer) => answer.comfortZone)?.comfortZone ?? "balanced";
 

@@ -219,6 +219,107 @@ const replaceableStopIndexes = (stops: Plan["stops"], plan: Plan) => {
 const closestReplaceableIndex = (indexes: number[], targetIndex: number) =>
   indexes.slice().sort((a, b) => Math.abs(a - targetIndex) - Math.abs(b - targetIndex) || a - b)[0] ?? -1;
 
+type PlanTuneKind = "cheaper" | "shorter" | "local" | "adventurous" | "relaxed";
+
+const costRangeForPlan = (plan: Plan) => `$${plan.estimatedCostMin}-$${plan.estimatedCostMax}`;
+
+const durationLabelForPlan = (plan: Plan) => {
+  const hours = Math.floor(plan.estimatedDurationMinutes / 60);
+  const minutes = plan.estimatedDurationMinutes % 60;
+  if (!hours) return `${minutes} min`;
+  if (!minutes) return `${hours} hr`;
+  return `${hours} hr ${minutes} min`;
+};
+
+const placeNameForStop = (stop: Plan["stops"][number], allPlaces: Place[]) => allPlaces.find((place) => place.id === stop.placeId)?.name ?? "a stop";
+
+const changedStopSummaries = (before: Plan, after: Plan, allPlaces: Place[]) => {
+  const maxLength = Math.max(before.stops.length, after.stops.length);
+  const summaries: string[] = [];
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const beforeStop = before.stops[index];
+    const afterStop = after.stops[index];
+
+    if (beforeStop && afterStop && beforeStop.placeId !== afterStop.placeId) {
+      summaries.push(`${placeNameForStop(beforeStop, allPlaces)} became ${placeNameForStop(afterStop, allPlaces)}`);
+    } else if (beforeStop && !afterStop) {
+      summaries.push(`${placeNameForStop(beforeStop, allPlaces)} was removed`);
+    } else if (!beforeStop && afterStop) {
+      summaries.push(`${placeNameForStop(afterStop, allPlaces)} was added`);
+    }
+  }
+
+  return summaries;
+};
+
+const changedPlaceTags = (before: Plan, after: Plan, allPlaces: Place[]) => {
+  const beforeIds = new Set(before.stops.map((stop) => stop.placeId));
+  return after.stops
+    .filter((stop) => !beforeIds.has(stop.placeId))
+    .map((stop) => allPlaces.find((place) => place.id === stop.placeId))
+    .filter((place): place is Place => Boolean(place))
+    .flatMap((place) => [...place.vibeTags, ...place.practicalTags, ...place.goodFor])
+    .filter((tag, index, tags) => tags.indexOf(tag) === index)
+    .slice(0, 4);
+};
+
+const averageDistance = (plan: Plan, allPlaces: Place[]) => {
+  const distances = plan.stops
+    .map((stop) => allPlaces.find((place) => place.id === stop.placeId)?.distanceMiles)
+    .filter((distance): distance is number => typeof distance === "number");
+
+  if (!distances.length) return undefined;
+  return distances.reduce((sum, distance) => sum + distance, 0) / distances.length;
+};
+
+const buildTuneExplanation = (kind: PlanTuneKind, before: Plan, after: Plan, allPlaces: Place[], user: User) => {
+  const changes = changedStopSummaries(before, after, allPlaces);
+  const tags = changedPlaceTags(before, after, allPlaces);
+  const costDifference = before.estimatedCostMax - after.estimatedCostMax;
+  const timeDifference = before.estimatedDurationMinutes - after.estimatedDurationMinutes;
+  const beforeAverageDistance = averageDistance(before, allPlaces);
+  const afterAverageDistance = averageDistance(after, allPlaces);
+  const distanceDifference =
+    typeof beforeAverageDistance === "number" && typeof afterAverageDistance === "number" ? beforeAverageDistance - afterAverageDistance : undefined;
+
+  const planBasics = `Now ${after.stops.length} stops, ${durationLabelForPlan(after)}, estimated ${costRangeForPlan(after)}.`;
+  const changedLine = changes.length ? `I changed ${changes.slice(0, 3).join("; ")}.` : "I kept the stop list intact because it was already the best fit available without duplicating places.";
+  const tagLine = tags.length ? `The new mix leans into ${tags.join(", ")}.` : "";
+  const aceLine = user.aceType ? `This still respects your ${user.aceType.name} profile and keeps recommendations near ${user.currentLocation.label}.` : `This still respects your saved preferences and keeps recommendations near ${user.currentLocation.label}.`;
+
+  if (kind === "cheaper") {
+    const savingsLine = costDifference > 0 ? `Estimated top-end cost dropped by about $${costDifference}.` : "Cost stayed about the same because there was not a clearly cheaper non-duplicate swap.";
+    return [savingsLine, changedLine, tagLine, planBasics].filter(Boolean).join(" ");
+  }
+
+  if (kind === "shorter") {
+    const timeLine = timeDifference > 0 ? `This trims about ${durationLabelForPlan({ ...after, estimatedDurationMinutes: timeDifference })} from the outing.` : "This keeps the plan compact without forcing an awkward replacement.";
+    return [timeLine, changedLine, "The remaining stops preserve the strongest fit and reduce decision load.", planBasics].join(" ");
+  }
+
+  if (kind === "local") {
+    const distanceLine =
+      typeof distanceDifference === "number" && distanceDifference > 0.1
+        ? `Average stop distance moved about ${distanceDifference.toFixed(1)} mi closer.`
+        : "The route favors places with local, walkable, or hidden-gem signals.";
+    return [distanceLine, changedLine, tagLine, aceLine, planBasics].filter(Boolean).join(" ");
+  }
+
+  if (kind === "adventurous") {
+    return [changedLine, tagLine || "The route now prioritizes more memorable and discovery-friendly stops.", aceLine, planBasics].join(" ");
+  }
+
+  return [
+    changedLine,
+    tagLine || "The pacing now favors calmer, lower-friction places and easier transitions.",
+    timeDifference > 0 ? `It also trims about ${durationLabelForPlan({ ...after, estimatedDurationMinutes: timeDifference })}.` : "",
+    planBasics
+  ]
+    .filter(Boolean)
+    .join(" ");
+};
+
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -464,6 +565,7 @@ export const useAppStore = create<AppState>()(
       makePlanCheaper: (planId) =>
         set((state) => ({
           plans: replacePlan(state.plans, planId, (plan) => {
+            const beforePlan = { ...plan, ...recalculatePlanTotals(plan, state.places) };
             const baseStops = normalizeUniqueStops(plan.stops, state.places, ["$", "low effort", "walkable"]);
             const usedPlaceIds = new Set(baseStops.map((stop) => stop.placeId));
             const protectedPlaceIds = protectedPlaceIdsForPlan(plan);
@@ -480,10 +582,10 @@ export const useAppStore = create<AppState>()(
             });
             const nextPlan = { ...plan, stops: nextStops };
             nextPlan.stops = rescheduleStops(nextPlan.stops, state.places, plan.startTime);
+            const nextPlanWithTotals = { ...nextPlan, ...recalculatePlanTotals(nextPlan, state.places) };
             return {
-              ...nextPlan,
-              explanation: `${plan.explanation} Adjusted toward lower-cost stops.`,
-              ...recalculatePlanTotals(nextPlan, state.places)
+              ...nextPlanWithTotals,
+              explanation: buildTuneExplanation("cheaper", beforePlan, nextPlanWithTotals, state.places, state.user)
             };
           }),
           toast: { message: "Plan made cheaper where possible" }
@@ -492,15 +594,16 @@ export const useAppStore = create<AppState>()(
       makePlanShorter: (planId) =>
         set((state) => ({
           plans: replacePlan(state.plans, planId, (plan) => {
+            const beforePlan = { ...plan, ...recalculatePlanTotals(plan, state.places) };
             const baseStops = normalizeUniqueStops(plan.stops, state.places, ["close", "low effort"]);
             const nextPlan = {
               ...plan,
-              stops: baseStops.length > 1 ? baseStops.slice(0, -1) : baseStops,
-              explanation: `${plan.explanation} Shortened for a lighter outing.`
+              stops: baseStops.length > 1 ? baseStops.slice(0, -1) : baseStops
             };
+            const nextPlanWithTotals = { ...nextPlan, ...recalculatePlanTotals(nextPlan, state.places) };
             return {
-              ...nextPlan,
-              ...recalculatePlanTotals(nextPlan, state.places)
+              ...nextPlanWithTotals,
+              explanation: buildTuneExplanation("shorter", beforePlan, nextPlanWithTotals, state.places, state.user)
             };
           }),
           toast: { message: "Plan shortened" }
@@ -509,21 +612,29 @@ export const useAppStore = create<AppState>()(
       makePlanMoreLocal: (planId) =>
         set((state) => ({
           plans: replacePlan(state.plans, planId, (plan) => {
+            const beforePlan = { ...plan, ...recalculatePlanTotals(plan, state.places) };
             const baseStops = normalizeUniqueStops(plan.stops, state.places, ["local", "hidden gem", "walkable", "seasonal"]);
             const usedPlaceIds = baseStops.map((stop) => stop.placeId);
             const candidate = candidateByTags(usedPlaceIds, state.places, ["local", "hidden gem", "walkable", "seasonal"]);
             const replaceIndex = closestReplaceableIndex(replaceableStopIndexes(baseStops, plan), Math.max(0, baseStops.length - 2));
             if (!candidate || baseStops.length === 0 || replaceIndex < 0) {
               const normalizedPlan = { ...plan, stops: rescheduleStops(baseStops, state.places, plan.startTime) };
-              return { ...normalizedPlan, ...recalculatePlanTotals(normalizedPlan, state.places) };
+              const normalizedPlanWithTotals = { ...normalizedPlan, ...recalculatePlanTotals(normalizedPlan, state.places) };
+              return {
+                ...normalizedPlanWithTotals,
+                explanation: buildTuneExplanation("local", beforePlan, normalizedPlanWithTotals, state.places, state.user)
+              };
             }
             const nextStops = replaceStopInPlan(baseStops, replaceIndex, candidate);
             const nextPlan = {
               ...plan,
-              stops: rescheduleStops(nextStops, state.places, plan.startTime),
-              explanation: `${plan.explanation} Adjusted toward more local, walkable Savannah energy.`
+              stops: rescheduleStops(nextStops, state.places, plan.startTime)
             };
-            return { ...nextPlan, ...recalculatePlanTotals(nextPlan, state.places) };
+            const nextPlanWithTotals = { ...nextPlan, ...recalculatePlanTotals(nextPlan, state.places) };
+            return {
+              ...nextPlanWithTotals,
+              explanation: buildTuneExplanation("local", beforePlan, nextPlanWithTotals, state.places, state.user)
+            };
           }),
           toast: { message: "Plan made more local" }
         })),
@@ -531,21 +642,29 @@ export const useAppStore = create<AppState>()(
       makePlanMoreAdventurous: (planId) =>
         set((state) => ({
           plans: replacePlan(state.plans, planId, (plan) => {
+            const beforePlan = { ...plan, ...recalculatePlanTotals(plan, state.places) };
             const baseStops = normalizeUniqueStops(plan.stops, state.places, ["weird", "hidden gem", "memorable", "culture", "creative"]);
             const usedPlaceIds = baseStops.map((stop) => stop.placeId);
             const candidate = candidateByTags(usedPlaceIds, state.places, ["weird", "hidden gem", "memorable", "culture", "creative"]);
             const replaceIndex = closestReplaceableIndex(replaceableStopIndexes(baseStops, plan), Math.max(0, Math.floor(baseStops.length / 2)));
             if (!candidate || baseStops.length === 0 || replaceIndex < 0) {
               const normalizedPlan = { ...plan, stops: rescheduleStops(baseStops, state.places, plan.startTime) };
-              return { ...normalizedPlan, ...recalculatePlanTotals(normalizedPlan, state.places) };
+              const normalizedPlanWithTotals = { ...normalizedPlan, ...recalculatePlanTotals(normalizedPlan, state.places) };
+              return {
+                ...normalizedPlanWithTotals,
+                explanation: buildTuneExplanation("adventurous", beforePlan, normalizedPlanWithTotals, state.places, state.user)
+              };
             }
             const nextStops = replaceStopInPlan(baseStops, replaceIndex, candidate);
             const nextPlan = {
               ...plan,
-              stops: rescheduleStops(nextStops, state.places, plan.startTime),
-              explanation: `${plan.explanation} Adjusted with a more memorable, outside-the-usual stop.`
+              stops: rescheduleStops(nextStops, state.places, plan.startTime)
             };
-            return { ...nextPlan, ...recalculatePlanTotals(nextPlan, state.places) };
+            const nextPlanWithTotals = { ...nextPlan, ...recalculatePlanTotals(nextPlan, state.places) };
+            return {
+              ...nextPlanWithTotals,
+              explanation: buildTuneExplanation("adventurous", beforePlan, nextPlanWithTotals, state.places, state.user)
+            };
           }),
           toast: { message: "Plan made more adventurous" }
         })),
@@ -553,13 +672,18 @@ export const useAppStore = create<AppState>()(
       makePlanMoreRelaxed: (planId) =>
         set((state) => ({
           plans: replacePlan(state.plans, planId, (plan) => {
+            const beforePlan = { ...plan, ...recalculatePlanTotals(plan, state.places) };
             const baseStops = normalizeUniqueStops(plan.stops, state.places, ["cozy", "quiet", "coffee", "outdoors", "walkable"]);
             const usedPlaceIds = baseStops.map((stop) => stop.placeId);
             const candidate = candidateByTags(usedPlaceIds, state.places, ["cozy", "quiet", "coffee", "outdoors", "walkable"]);
             const indexes = replaceableStopIndexes(baseStops, plan);
             if (!candidate || baseStops.length === 0 || indexes.length === 0) {
               const normalizedPlan = { ...plan, stops: rescheduleStops(baseStops, state.places, plan.startTime) };
-              return { ...normalizedPlan, ...recalculatePlanTotals(normalizedPlan, state.places) };
+              const normalizedPlanWithTotals = { ...normalizedPlan, ...recalculatePlanTotals(normalizedPlan, state.places) };
+              return {
+                ...normalizedPlanWithTotals,
+                explanation: buildTuneExplanation("relaxed", beforePlan, normalizedPlanWithTotals, state.places, state.user)
+              };
             }
             const activeIndex = indexes.find((index) => {
               const stop = baseStops[index];
@@ -572,10 +696,13 @@ export const useAppStore = create<AppState>()(
             );
             const nextPlan = {
               ...plan,
-              stops: rescheduleStops(nextStops, state.places, plan.startTime),
-              explanation: `${plan.explanation} Adjusted toward a calmer pace with easier transitions.`
+              stops: rescheduleStops(nextStops, state.places, plan.startTime)
             };
-            return { ...nextPlan, ...recalculatePlanTotals(nextPlan, state.places) };
+            const nextPlanWithTotals = { ...nextPlan, ...recalculatePlanTotals(nextPlan, state.places) };
+            return {
+              ...nextPlanWithTotals,
+              explanation: buildTuneExplanation("relaxed", beforePlan, nextPlanWithTotals, state.places, state.user)
+            };
           }),
           toast: { message: "Plan made more relaxed" }
         })),

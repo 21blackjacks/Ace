@@ -1,6 +1,7 @@
 import { CircleDollarSign, Navigation, Search, ShieldCheck, Sparkles, Star, TentTree, UsersRound } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { BrandLogo } from "../components/layout/BrandLogo";
 import { PlaceImage } from "../components/places/PlaceImage";
 import { loadOnboardingPreferences } from "../data/onboarding";
 import { useCurrentLocation } from "../hooks/useCurrentLocation";
@@ -70,9 +71,7 @@ export function HomePage() {
     <section className="min-h-screen px-6 pb-5 pt-12">
       <header className="relative">
         <div className="min-w-0">
-          <p className="bg-gradient-to-r from-[#83C9FF] via-[#6DB9FF] to-[#20D6D2] bg-clip-text text-[44px] font-black leading-none tracking-normal text-transparent drop-shadow-[0_0_12px_rgba(32,214,210,0.28)]">
-            ACE
-          </p>
+          <BrandLogo className="h-[52px] w-auto drop-shadow-[0_0_14px_rgba(32,214,210,0.24)]" />
           <h1 className="mt-6 whitespace-nowrap text-[27px] font-extrabold leading-none tracking-normal">Good evening, {user.name} ✨</h1>
           <p className="mt-2.5 flex items-center gap-2 text-[15px] font-semibold text-ace-secondary">
             Finding fits near {user.currentLocation.label}
